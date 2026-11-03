@@ -179,3 +179,23 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     }
     v
 }
+
+/// 翻译单个 T 的只读引用（不做权限检查，查不到会 panic）
+pub fn translated_ref<T>(token: usize, ptr: *const T) -> &'static T {
+    let page_table = PageTable::from_token(token);
+    let va = VirtAddr::from(ptr as usize);
+    let vpn = va.floor();
+    let ppn = page_table.translate(vpn).unwrap().ppn();
+    let pa = (ppn.0 << 12) + va.page_offset();
+    unsafe { (pa as *const T).as_ref().unwrap() }
+}
+
+/// 翻译单个 T 的可变引用（不做权限检查，查不到会 panic）
+pub fn translated_refmut<T>(token: usize, ptr: *mut T) -> &'static mut T {
+    let page_table = PageTable::from_token(token);
+    let va = VirtAddr::from(ptr as usize);
+    let vpn = va.floor();
+    let ppn = page_table.translate(vpn).unwrap().ppn();
+    let pa = (ppn.0 << 12) + va.page_offset();
+    unsafe { (pa as *mut T).as_mut().unwrap() }
+}

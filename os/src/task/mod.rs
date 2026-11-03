@@ -13,7 +13,7 @@ mod context;
 mod switch;
 #[allow(clippy::module_inception)]
 mod task;
-
+use crate::config::MAX_SYSCALL_NUM;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
@@ -37,15 +37,15 @@ pub struct TaskManager {
     /// total number of tasks
     num_app: usize,
     /// use inner value to get mutable access
-    inner: UPSafeCell<TaskManagerInner>,
+    pub inner: UPSafeCell<TaskManagerInner>,
 }
 
 /// The task manager inner in 'UPSafeCell'
-struct TaskManagerInner {
+pub struct TaskManagerInner {
     /// task list
-    tasks: Vec<TaskControlBlock>,
+    pub tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
-    current_task: usize,
+    pub current_task: usize,
 }
 
 lazy_static! {
@@ -201,4 +201,23 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// 获取当前任务对编号为 id 的系统调用的调用次数
+pub fn get_syscall_count(id: usize) -> isize {
+    if id >= MAX_SYSCALL_NUM {
+        return -1;
+    }
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    let cur = inner.current_task;
+    inner.tasks[cur].syscall_count[id] as isize
+}
+/// 将当前任务对编号为 id 的系统调用的次数加一
+pub fn inc_syscall_count(id: usize) {
+    if id >= MAX_SYSCALL_NUM {
+        return;
+    }
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let cur = inner.current_task;                      // ← 先取下标
+    inner.tasks[cur].syscall_count[id] += 1;           // ← 用 cur，不再借 inner
 }
