@@ -10,7 +10,8 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::RefMut;
-
+///BIG_STRIDE
+pub const BIG_STRIDE: usize = 1 << 32;
 /// Task control block structure
 ///
 /// Directly save the contents that will not change during running
@@ -71,6 +72,15 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    ///运行长度
+    pub stride: usize,
+
+    ///增量
+    pub pass: usize,
+
+    ///优先级
+    pub priority: usize,
 }
 
 impl TaskControlBlockInner {
@@ -135,6 +145,9 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+	 	    stride: 0,
+		    pass: BIG_STRIDE / 16,
+		    priority: 16,
                 })
             },
         };
@@ -216,6 +229,9 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+		    stride: 0,
+		    pass: BIG_STRIDE / 16,
+		    priority: 16,
                 })
             },
         });

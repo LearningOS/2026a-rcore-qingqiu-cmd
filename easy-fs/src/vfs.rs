@@ -12,11 +12,13 @@ pub struct Inode {
     block_offset: usize,
     fs: Arc<Mutex<EasyFileSystem>>,
     block_device: Arc<dyn BlockDevice>,
+    inode_id: u32,
 }
 
 impl Inode {
     /// Create a vfs inode
     pub fn new(
+	inode_id: u32,
         block_id: u32,
         block_offset: usize,
         fs: Arc<Mutex<EasyFileSystem>>,
@@ -27,6 +29,7 @@ impl Inode {
             block_offset,
             fs,
             block_device,
+	    inode_id,
         }
     }
     /// Call a function over a disk inode to read it
@@ -65,6 +68,7 @@ impl Inode {
             self.find_inode_id(name, disk_inode).map(|inode_id| {
                 let (block_id, block_offset) = fs.get_disk_inode_pos(inode_id);
                 Arc::new(Self::new(
+		    inode_id,
                     block_id,
                     block_offset,
                     self.fs.clone(),
@@ -131,7 +135,8 @@ impl Inode {
         block_cache_sync_all();
         // return inode
         Some(Arc::new(Self::new(
-            block_id,
+            new_inode_id,
+	    block_id,
             block_offset,
             self.fs.clone(),
             self.block_device.clone(),
@@ -154,6 +159,97 @@ impl Inode {
             }
             v
         })
+    }
+    ///拿到inode编号
+    pub fn inode_id(&self) -> u32 {
+		self.inode_id
+	}
+    ///硬链接数
+    pub fn nlink(&self) -> u32 {
+		self.read_disk_inode(|di|di.nlink)
+	}
+    ///是否是目录
+    pub fn is_dir(&self) -> bool {
+        self.read_disk_inode(|di| di.is_dir())
+    }
+    ///根据inode_id构造Inode
+    fn get_inode(&self, inode_id: u32) -> Inode {
+        let (block_id, block_offset) = self.fs.lock().get_disk_inode_pos(inode_id);
+        Inode::new(
+            inode_id,
+            block_id,
+            block_offset,
+            Arc::clone(&self.fs),
+            Arc::clone(&self.block_device),
+        )
+    }
+///link
+pub fn link(&self, name: &str, inode_id: u32) -> isize {
+        if self.find(name).is_some() {
+            return -1;
+        }
+
+        // 锁住文件系统，increase_size 要用
+        let mut fs = self.fs.lock();
+
+        self.modify_disk_inode(|root_inode| {
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let new_size = (file_count + 1) * DIRENT_SZ;
+            self.increase_size(new_size as u32, root_inode, &mut fs);
+            let dirent = DirEntry::new(name, inode_id);
+            root_inode.write_at(
+                DIRENT_SZ * file_count,
+                dirent.as_bytes(),
+                &self.block_device,
+            );
+        });
+
+        drop(fs);
+
+        let target = self.get_inode(inode_id);
+        target.modify_disk_inode(|di| {
+            di.nlink += 1;
+        });
+
+        0
+    }
+
+    /// 删除名为 name 的目录项，目标 inode 的 nlink 减一；到 0 则清空
+    pub fn unlink(&self, name: &str) -> isize {
+        let inode_id = match self.read_disk_inode(|di| self.find_inode_id(name, di)) {
+            Some(id) => id,
+            None => return -1,
+        };
+
+        let file_count = self.read_disk_inode(|di| di.size as usize / DIRENT_SZ);
+        self.modify_disk_inode(|di| {
+            let mut found = false;
+            for i in 0..file_count {
+                let mut dirent = DirEntry::empty();
+                di.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device);
+                if dirent.name() == name && !found {
+                    found = true;
+                } else if found {
+                    di.write_at(
+                        DIRENT_SZ * (i - 1),
+                        dirent.as_bytes(),
+                        &self.block_device,
+                    );
+                }
+            }
+            if found {
+                di.size -= DIRENT_SZ as u32;
+            }
+        });
+
+        let target = self.get_inode(inode_id);
+        target.modify_disk_inode(|di| {
+            di.nlink -= 1;
+        });
+        if target.read_disk_inode(|di| di.nlink) == 0 {
+            target.clear();
+        }
+        0
     }
     /// Read data from current inode
     pub fn read_at(&self, offset: usize, buf: &mut [u8]) -> usize {
